@@ -17,10 +17,10 @@ import nltk
 from nltk import word_tokenize
 
 Dataset = namedtuple('Dataset','sentences labels')
-
+random.seed(2)
 num_classes = 3
 learning_rate = 0.05
-num_epochs = 100
+num_epochs = 2
 embedding_dim = 10
 label_to_id = {'World':0, 'Entertainment':1, 'Sports':2}
 unknown_word_id = 0
@@ -35,7 +35,7 @@ def create_label_vec(label):
 
 def tokenize(sens):
     # Tokenize a given sentence into a sequence of tokens.
-    return nltk.word_tokenize(sens)
+    return word_tokenize(sens)
 
 def map_token_seq_to_word_id_seq(token_seq, word_to_id):
     return [map_word_to_id(word_to_id,word) for word in token_seq]
@@ -61,8 +61,6 @@ def build_vocab(sens_file_name):
     word_to_id = dict()
     for word, _ in count:
         word_to_id[word] = len(word_to_id)
-        if len(word_to_id) == 500:
-            break;
     print('size of vocabulary is %s. ' % len(word_to_id))
     return word_to_id
 
@@ -93,19 +91,22 @@ def read_dataset(sens_file_name, word_to_id):
 
 
 def eval(word_to_id, train_dataset, dev_dataset, test_dataset):
+    num_words = len(word_to_id)
     # Initialize the placeholders and Variables. E.g.
-    correct_label = tf.placeholder(tf.float32, shape=[None,num_classes])
+    correct_label = tf.placeholder(tf.float32, shape=[num_classes])
     #correct_label = tf.placeholder(tf.float32, shape=[num_classes])
     #input_sens = tf.placeholder(tf.float32, shape = [None, len(word_to_id)])
     # Hint: use [None] when you are not certain about the value of shape
     test_results = []
     #print("here")
     #x = tf.placeholder(tf.float32, [None, len(word_to_id)])
-    x = tf.placeholder(tf.float32, [None, len(word_to_id)])
+    input_sens = tf.placeholder(tf.int32, shape=[None])
+    embeddings = tf.Variable(tf.random_uniform([num_words, embedding_dim], -1.0, 1.0))
+    new_mat = tf.Variable(tf.random_uniform([embedding_dim, num_classes], -1.0, 1.0))
     #W = tf.Variable(tf.zeros([len(word_to_id), num_classes]))
-    W = tf.Variable(tf.zeros([len(word_to_id), num_classes]))
-    b = tf.Variable(tf.zeros([num_classes]))
-    y = tf.nn.softmax(tf.matmul(x, W) + b)
+    #W = tf.Variable(tf.zeros([len(word_to_id), num_classes]))
+    #b = tf.Variable(tf.zeros([num_classes]))
+    #y = tf.nn.softmax(tf.matmul(x, W) + b)
     #print("here!")
     with tf.Session() as sess:
         # Write code for constructing computation graph here.
@@ -114,14 +115,19 @@ def eval(word_to_id, train_dataset, dev_dataset, test_dataset):
         #    2. Try to reuse/modify the code from tensorflow tutorial.
         #    3. Use tf.reshape if the shape information of a tensor gets lost during the contruction of computation graph.
 
+        embed = tf.nn.embedding_lookup(embeddings, input_sens)
+        tmp_m = tf.reduce_sum(embed, 0)
+        sum_rep = tf.reshape(tmp_m, [1, embedding_dim])
         #evaluation code, assume y is the estimated probability vector of each class
-        correct_prediction = tf.equal(tf.argmax(y, 1), tf.argmax(correct_label, 1))
+        y = tf.nn.softmax(tf.matmul(sum_rep, new_mat))
+
+        correct_prediction = tf.equal(tf.argmax(y, 1), tf.argmax(correct_label, 0))
         accuracy = tf.cast(correct_prediction, tf.float32)
-        prediction = tf.cast(tf.argmax(y, 1), tf.int32)
 
         #correct_label = tf.placeholder(tf.float32, [None, num_classes])
         cross_entropy = tf.reduce_mean(-tf.reduce_sum(correct_label * tf.log(y), reduction_indices=[1]))
         train_step = tf.train.GradientDescentOptimizer(learning_rate).minimize(cross_entropy)
+        prediction = tf.cast(tf.argmax(y, 1), tf.int32)
 
         sess.run(tf.initialize_all_variables())
         # In this assignment it is sufficient to use GradientDescentOptimizer, you are not required to implement a regularizer.
@@ -130,63 +136,31 @@ def eval(word_to_id, train_dataset, dev_dataset, test_dataset):
         for epoch in range(num_epochs):
             shuffle(train_dataset)
             # Writing the code for training. It is not required to use a batch with size larger than one.
-            print(train_dataset[:5])
-            time = 0
-            batch = 0
             for (sens, label) in train_dataset:
-                time += 1
-                X = np.zeros((batch_size,len(word_to_id)))
-                Y = np.zeros((batch_size,num_classes))
-                for i in sens:
-                    X[batch][i] += 1
-                Y[batch] = label
-                batch += 1
-                if batch == batch_size-1:
-                    break
-                #print("%dtime" % time)
-                #print(X)
-                #print(Y)
-            train_step.run({x: X, correct_label:Y})
-                #if time == 10:
-                    #break
-            # The following line computes the accuracy on the development dataset in each epoch.
-            print('Epoch %d : %s .' % (epoch,compute_accuracy(word_to_id, accuracy, x, correct_label, dev_dataset)))
-
+                train_step.run({input_sens: sens, correct_label:label})
+            print('Epoch %d : %s .' % (epoch,compute_accuracy(accuracy, input_sens, correct_label, dev_dataset)))
         # uncomment the following line in the grading lab for evaluation
-        print('Accuracy on the test set : %s.' % compute_accuracy(word_to_id, accuracy, x, correct_label, test_dataset))
+        print('Accuracy on the test set : %s.' % compute_accuracy(accuracy, input_sens, correct_label, test_dataset))
         # input_sens is the placeholder of an input sentence.
-        #test_results = predict(word_to_id, prediction, x, test_dataset)
+        test_results = predict(prediction, input_sens, test_dataset)
     return test_results
 
 
-def compute_accuracy(word_to_id,accuracy,input_sens, correct_label, eval_dataset):
+def compute_accuracy(accuracy, input_sens, correct_label, eval_dataset):
     num_correct = 0
-    print("here")
     for (sens, label) in eval_dataset:
-        X = np.zeros((1,len(word_to_id)))
-        Y = np.zeros((1,num_classes))
-        for i in sens:
-            X[0][i] += 1
-        Y[0] = label
-
         #num_correct += accuracy.eval(feed_dict={input_sens: X, correct_label: Y})
-        num_correct += accuracy.eval({input_sens: X, correct_label: Y})
+        num_correct += accuracy.eval(feed_dict={input_sens: sens, correct_label: label})
         #if num_correct % 1000 == 0:
         #    print(num_correct)
     print('#correct sentences is %s ' % num_correct)
     return num_correct / len(eval_dataset)
 
 
-def predict(word_to_id, prediction, input_sens, test_dataset):
+def predict(prediction, input_sens, test_dataset):
     test_results = []
-    for sens in test_dataset:
-        X = np.zeros((1,len(word_to_id)))
-        for i in sens:
-            #X[0][word_to_id[j]] += 1
-            X[0][i] += 1
-        #test_results.append(prediction.eval(feed_dict={input_sens: X}))
-        #print(prediction.eval({input_sens: X}))
-        test_results.append(prediction.eval({input_sens: X}))
+    for (sens, label) in test_dataset:
+        test_results.append(prediction.eval(feed_dict={input_sens: sens}))
     return test_results
 
 
@@ -230,9 +204,9 @@ def main(argv):
     #print(read_labeled_dataset(trainSensFile, trainLabelFile, word_to_id))
     #print(word_to_id['Radical'])
     train_dataset = read_labeled_dataset(trainSensFile, trainLabelFile, word_to_id)
-    print(train_dataset[:10])
+    #print(train_dataset[:10])
     dev_dataset = read_labeled_dataset(devSensFile, devLabelFile, word_to_id)
-    print(dev_dataset[:10])
+    #print(dev_dataset[:10])
     test_dataset = read_labeled_dataset(testSensFile, testLabelFile, word_to_id)
     #test_dataset = read_dataset(testSensFile, word_to_id)
     test_results = eval(word_to_id, train_dataset, dev_dataset, test_dataset)
